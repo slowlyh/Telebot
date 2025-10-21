@@ -34,6 +34,8 @@ function makeClient(instance) {
   }
 }
 export const Velyn = makeClient(createClient('https://velyn.mom'))
-const APIRequest = { Velyn }
+export const Neko = makeClient(createClient('https://api.nekolabs.my.id'))
+
+const APIRequest = { Velyn, Neko }
 
 export default APIRequest

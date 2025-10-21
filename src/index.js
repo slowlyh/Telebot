@@ -14,9 +14,10 @@
 import { Telegraf } from 'telegraf'
 import config from '#config/index'
 import { Registry } from '#core/registry'
-import API, { Velyn } from '#lib/API/request'
+import API, { Velyn, Neko } from '#lib/API/request'
 import logger from '#lib/logger'
 import DB from '#db/index'
+import uploader from '#lib/uploader'
 
 if (!config.token) {
   console.log('BOT_TOKEN missing')
@@ -71,8 +72,10 @@ bot.on('text', async (ctx) => {
       registry,
       isOwner: isOwner(ctx.from.id),
       Velyn,
+      Neko,
       API,
       DB,
+      uploader,
     })
   } catch (e) {
     const failed = meta.failed || 'Failed to execute %command: %error'
