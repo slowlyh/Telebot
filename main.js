@@ -1,158 +1,89 @@
 /**
- * Copyright © 2025 [ slowlyh ]
- *
- * All rights reserved. This source code is the property of [ ChatGPT ].
- * Unauthorized copying, distribution, modification, or use of this file,
- * via any medium, is strictly prohibited without prior written permission.
- *
- * This software is protected under international copyright laws.
- *
- * Contact: [ hyuuoffc@gmail.com ]
- * GitHub: https://github.com/slowlyh
- * Official: https://hyuu.tech
+ * Telebot © 2025 slowlyh — supervisor: dashboard + auto-restart.
+ * Jalankan: `npm start`. Untuk restart dari bot, kirim 'reset' via IPC.
  */
 import { spawn } from 'child_process'
-import { promises as fs, existsSync, mkdirSync } from 'fs'
 import os from 'os'
 import path from 'path'
+import fs from 'fs'
 import { fileURLToPath } from 'url'
-import boxen from 'boxen'
-import config from '#config/index'
+import 'dotenv/config'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const SCRIPT = path.join(__dirname, 'src', 'index.js')
 
-const projectRoot = __dirname
-const tmpDir = path.join(projectRoot, 'tmp')
-const pluginsDir = path.join(projectRoot, 'src', 'plugins')
-const packageJsonPath = path.join(projectRoot, 'package.json')
-const mainScript = path.join(projectRoot, 'src', 'index.js')
+let child = null
+let stopping = false
 
-let childProcess = null
-let isRunning = false
-let isManualStop = false
-
-function fmtBytes(n) {
-  const u = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < u.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(1)} ${u[i]}`
-}
-
-async function getFileSystemStats(folderPath) {
-  let folders = 0
-  let filesCount = 0
+const countPlugins = (dir) => {
+  let n = 0
   try {
-    const items = await fs.readdir(folderPath)
-    for (const item of items) {
-      const fullPath = path.join(folderPath, item)
-      const stat = await fs.stat(fullPath)
-      if (stat.isDirectory()) {
-        folders++
-        const sub = await getFileSystemStats(fullPath)
-        folders += sub.folders
-        filesCount += sub.files
-      } else {
-        filesCount++
-      }
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) n += countPlugins(path.join(dir, e.name))
+      else if (e.name.endsWith('.js')) n++
     }
   } catch {}
-  return { folders, files: filesCount }
+  return n
 }
 
-async function readPackageMeta() {
-  try {
-    const raw = await fs.readFile(packageJsonPath, 'utf-8')
-    const pkg = JSON.parse(raw)
-    return {
-      name: pkg.name || '-',
-      version: pkg.version || '-',
-      description: pkg.description || '-',
-      author: pkg.author || '-',
-    }
-  } catch {
-    return { name: '-', version: '-', description: '-', author: '-' }
-  }
-}
-
-function short(val, max = 48) {
-  const s = String(val ?? '')
-  return s.length > max ? s.slice(0, max - 1) + '…' : s
-}
-
-async function showGreet() {
-  console.log('Hi, Welcome User TeleBot.')
-  console.log(
-    'Gunakan secara bertanggung jawab. Dilarang spam, phishing, atau aktivitas melanggar hukum.\n',
-  )
-}
-
-async function showDashboard() {
-  const pkg = await readPackageMeta()
-  const stats = await getFileSystemStats(pluginsDir)
-  const totalMem = fmtBytes(os.totalmem())
-  const usedMem = fmtBytes(os.totalmem() - os.freemem())
-  const ownersStr = (config.owners || []).join(', ') || '-'
-
+function dashboard() {
+  const min = (s) => `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`
+  const mem = (b) => `${(b / 1048576).toFixed(0)}MB`
   const rows = [
-    ['App', short(pkg.name, 30)],
-    ['Version', pkg.version],
-    ['Node', process.version],
-    ['Platform', `${os.platform()} ${os.release()} (${os.arch()})`],
-    ['Memory', `${usedMem}/${totalMem}`],
-    ['Uptime', `${Math.round(os.uptime() / 60)}m`],
-    ['Prefix', config.prefix],
-    ['Owners', short(ownersStr, 30)],
-    ['Token', config.token ? 'set' : 'not-set'],
-    ['Plugins', `${stats.files} files / ${stats.folders} dirs`],
+    ['app', 'Telebot v3'],
+    ['node', process.version],
+    ['host', `${os.platform()}/${os.arch()}`],
+    ['mem', `${mem(os.totalmem() - os.freemem())}/${mem(os.totalmem())}`],
+    ['uptime', min(os.uptime())],
+    ['prefix', process.env.BOT_PREFIX || '/'],
+    ['owners', process.env.OWNER_IDS || '-'],
+    ['token', process.env.BOT_TOKEN ? 'set' : 'MISSING'],
+    ['plugins', String(countPlugins(path.join(__dirname, 'src', 'plugins')))],
+    ['db', process.env.DB_TYPE || 'json'],
   ]
-
-  const keyW = 10
-  const body = rows.map(([k, v]) => `${k.padEnd(keyW)}: ${v}`).join('\n')
-  const bx = boxen(body, {
-    padding: { top: 0, right: 1, bottom: 0, left: 1 },
-    margin: { top: 0, right: 1, bottom: 1, left: 1 },
-    borderStyle: 'single',
-    title: 'Bot Dashboard',
-    titleAlignment: 'center',
-  })
-  console.log(bx)
+  const w = Math.max(...rows.map(([k]) => k.length))
+  const box = rows.map(([k, v]) => ` │ ${k.padEnd(w)} : ${v}`).join('\n')
+  console.log('┌─ BOT DASHBOARD ' + '─'.repeat(w + 10) + '┐')
+  console.log(box)
+  console.log('└' + '─'.repeat(w + 13) + '┘\n')
 }
 
-function start(scriptFile) {
-  if (isRunning) return
-  isRunning = true
-  const args = [scriptFile, ...process.argv.slice(2)]
-  childProcess = spawn(process.argv[0], args, { stdio: ['inherit', 'inherit', 'inherit', 'ipc'] })
-  childProcess.on('message', (message) => {
-    if (message === 'reset') {
-      childProcess.kill()
-      isRunning = false
-      start(scriptFile)
-    } else if (message === 'stop') {
-      isManualStop = true
-      childProcess.kill()
-    } else if (message === 'uptime') {
-      childProcess.send(process.uptime())
+function start() {
+  child = spawn(process.execPath, [SCRIPT], { stdio: 'inherit', ipc: true })
+  child.on('message', (m) => {
+    if (m === 'reset') {
+      stopping = true
+      child.kill()
     }
   })
-  childProcess.on('exit', (code, signal) => {
-    isRunning = false
-    if (isManualStop) {
-      isManualStop = false
+  child.on('exit', (code) => {
+    if (stopping) {
+      stopping = false
+      start() // reset diminta → langsung nyalakan lagi
       return
     }
-    setTimeout(() => start(scriptFile), 5000)
+    if (code === 2) {
+      console.log('[supervisor] berhenti permanen (konfigurasi fatal, misal token salah).')
+      process.exit(2)
+    }
+    console.log(`[supervisor] bot exit (code ${code}), restart in 5s…`)
+    setTimeout(start, 5000)
   })
 }
 
-if (!existsSync(tmpDir)) {
-  mkdirSync(tmpDir)
+dashboard()
+if (!process.env.BOT_TOKEN) {
+  console.log('[!] BOT_TOKEN belum di-set — cek .env (lihat .env.example)')
+  process.exit(1)
 }
-await showGreet()
-await showDashboard()
-start(mainScript)
+const dbDir = path.join(__dirname, process.env.DB_DIR || 'data')
+if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true })
+start()
+process.once('SIGINT', () => {
+  if (child) child.kill()
+  process.exit(0)
+})
+process.once('SIGTERM', () => {
+  if (child) child.kill()
+  process.exit(0)
+})

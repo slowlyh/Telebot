@@ -1,44 +1,38 @@
 /**
- * Copyright © 2025 [ slowlyh ]
- *
- * All rights reserved. This source code is the property of [ ChatGPT ].
- * Unauthorized copying, distribution, modification, or use of this file,
- * via any medium, is strictly prohibited without prior written permission.
- *
- * This software is protected under international copyright laws.
- *
- * Contact: [ hyuuoffc@gmail.com ]
- * GitHub: https://github.com/slowlyh
- * Official: https://hyuu.tech
+ * Telebot © 2025 slowlyh — plugin: ping & info dasar.
  */
 export default {
   name: 'ping',
-  description: 'Ping dan uptime',
-  command: ['ping', 'uptime'],
-  permissions: 'all',
+  description: 'Uji kecepatan respons bot + ringkasan status',
+  command: ['ping', 'uptime', 'status'],
   hidden: false,
-  failed: 'Failed to execute %command: %error',
-  wait: null,
   category: 'info',
   cooldown: 3,
-  limit: false,
   usage: '$prefix$command',
-  group: false,
-  private: false,
-  owner: false,
-  handler: async ({ ctx, command }) => {
+
+  handler: async ({ ctx, DB, registry }) => {
     const start = Date.now()
-    const m = await ctx.reply('ping...')
+    const m = await ctx.reply('🏓 Mengetik…')
     const latency = Date.now() - start
     const up = Math.floor(process.uptime())
     const h = String(Math.floor(up / 3600)).padStart(2, '0')
     const mi = String(Math.floor((up % 3600) / 60)).padStart(2, '0')
     const s = String(Math.floor(up % 60)).padStart(2, '0')
+    const st = registry.stats()
+    const mem = (process.memoryUsage().rss / 1048576).toFixed(0)
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       m.message_id,
       undefined,
-      `latency ${latency}ms\nuptime ${h}:${mi}:${s}`,
+      [
+        '📊 <b>Status Bot</b>',
+        `🏓 Latency : <code>${latency} ms</code>`,
+        `⏱️ Uptime  : <code>${h}:${mi}:${s}</code>`,
+        `🧠 RAM     : <code>${mem} MB</code> · Node <code>${process.version}</code>`,
+        `🧩 Plugin  : <code>${st.plugins}</code> aktif, <code>${st.visible}</code> di menu`,
+        `👥 Users   : <code>${DB.size('users')}</code> · Groups <code>${DB.size('groups')}</code>`,
+      ].join('\n'),
+      { parse_mode: 'HTML' },
     )
   },
 }

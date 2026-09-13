@@ -1,32 +1,29 @@
 {
   "name": "telebot",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
   "private": true,
-  "description": "Simple script bot telegram using telegraf.",
+  "description": "Simple Telegram bot built on Telegraf — modular plugins, hot-reload, JSON/SQLite storage, interactive menu.",
   "imports": {
-    "#/*": "./*",
-    "#config/*": "./src/config/*.js",
+    "#/*": "./src/*",
+    "#config": "./src/config.js",
     "#core/*": "./src/core/*.js",
-    "#plugins/*": "./src/plugins/*.js",
     "#lib/*": "./src/lib/*.js",
-    "#db/*": "./src/database/*.js"
+    "#db": "./src/db/index.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "scripts": {
     "start": "node main.js",
     "dev": "node main.js",
+    "bot": "node src/index.js",
     "lint": "eslint .",
     "format": "prettier -w ."
   },
   "dependencies": {
-    "axios": "^1.7.7",
-    "boxen": "^7.1.1",
     "chokidar": "^3.6.0",
     "dotenv": "^16.4.5",
-    "file-type": "^21.0.0",
     "telegraf": "^4.16.3"
   },
   "devDependencies": {

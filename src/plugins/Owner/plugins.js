@@ -1,135 +1,76 @@
 /**
- * Copyright © 2025 [ slowlyh ]
- *
- * All rights reserved. This source code is the property of [ ChatGPT ].
- * Unauthorized copying, distribution, modification, or use of this file,
- * via any medium, is strictly prohibited without prior written permission.
- *
- * This software is protected under international copyright laws.
- *
- * Contact: [ hyuuoffc@gmail.com ]
- * GitHub: https://github.com/slowlyh
- * Official: https://hyuu.tech
+ * Telebot © 2025 slowlyh — plugin: tambah/hapus/list plugin (tanpa API eksternal).
  */
-
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
-import logger from '#lib/logger'
-import axios from 'axios'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PLUGINS_BASE = path.join(__dirname, '..')
+
+const rel = (p) => (p.endsWith('.js') ? p : p + '.js')
 
 export default {
   name: 'plugins',
-  description: 'Kelola plugin (add/del/get/list)',
-  command: ['plugins'],
-  permissions: 'all',
+  description: 'Kelola plugin: add / del / list (reply dengan kode untuk add)',
+  command: ['plugins', 'plugin'],
   hidden: false,
-  failed: 'Failed to execute %command: %error',
-  wait: null,
   category: 'owner',
   cooldown: 2,
-  limit: false,
-  usage: '$prefix$command <add|del|get|list> [path/file.js]',
-  group: false,
-  private: false,
+  usage: '$prefix$command <add|del|list> [kategori/file]',
   owner: true,
 
   handler: async ({ ctx, args, DB, registry }) => {
-    const sub = (args[0] || '').toLowerCase()
-    const store = DB.getCollection('plugins')
+    const sub = (args[0] || 'list').toLowerCase()
 
-    // 🧩 list plugins
-    if (!sub || sub === 'list') {
-      const list = store.keys().sort()
-      await ctx.reply(
-        list.length ? `📦 *Daftar Plugin:*\n${list.join('\n')}` : 'Tidak ada plugin.',
-        {
-          parse_mode: 'Markdown',
-        },
-      )
-      return
+    if (sub === 'list') {
+      const list = [...registry.map.values()].sort((a, b) => a.name.localeCompare(b.name))
+      const txt = list
+        .map((p) => `• ${p.name} <i>(${p.category})</i> — ${p.commands.join(', ')}`)
+        .join('\n')
+      return ctx.reply(`🧩 <b>${list.length} plugin aktif</b>\n\n${txt}`, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      })
     }
 
-    // ➕ add plugin
     if (sub === 'add') {
-      const rawPath = args[1] || ''
-      if (!rawPath) return ctx.reply('Format: /plugins add <path/file.js> (reply dengan kode)')
-      const rel = rawPath.endsWith('.js') ? rawPath : rawPath + '.js'
-      const target = path.join(PLUGINS_BASE, rel)
-
-      const reply =
+      const raw = args[1] || ''
+      if (!raw) return ctx.reply('📖 /plugins add <kategori/nama> — lalu reply kode plugin.')
+      const target = path.join(PLUGINS_BASE, rel(raw))
+      if (!target.startsWith(PLUGINS_BASE)) return ctx.reply('⛔ Path tidak valid.')
+      const code =
         ctx.message.reply_to_message &&
         (ctx.message.reply_to_message.text || ctx.message.reply_to_message.caption)
-      if (!reply) return ctx.reply('❗ Balas kode plugin untuk disimpan.')
-
+      if (!code) return ctx.reply('↩️ Reply pesan berisi kode plugin.')
       fs.mkdirSync(path.dirname(target), { recursive: true })
-      fs.writeFileSync(target, reply)
-      logger.info('plugin saved: ' + target)
-      await registry.loadFile(target)
-      store.set(rel, { path: target, at: Date.now() })
-
-      await ctx.reply(`✅ Plugin *${rel}* berhasil ditambahkan.`, {
-        parse_mode: 'Markdown',
+      fs.writeFileSync(target, code)
+      const ok = await registry.loadFile(target)
+      DB.update('plugins_index', 'map', {
+        [rel(raw)]: { path: target, at: Date.now() },
       })
-      return
+      return ctx.reply(
+        ok ? `✅ Plugin <code>${rel(raw)}</code> ditambahkan.` : '⚠️ File tersimpan, tapi gagal dimuat (cek struktur plugin/log).',
+        { parse_mode: 'HTML' },
+      )
     }
 
-    // ❌ delete plugin
     if (sub === 'del') {
-      const rawPath = args[1] || ''
-      if (!rawPath) return ctx.reply('Format: /plugins del <path/file.js>')
-      const rel = rawPath.endsWith('.js') ? rawPath : rawPath + '.js'
-      const target = path.join(PLUGINS_BASE, rel)
-
+      const raw = args[1] || ''
+      if (!raw) return ctx.reply('📖 /plugins del <kategori/nama>')
+      const file = rel(raw)
+      const target = path.join(PLUGINS_BASE, file)
+      if (!target.startsWith(PLUGINS_BASE)) return ctx.reply('⛔ Path tidak valid.')
       try {
-        await fs.promises.unlink(target)
+        fs.unlinkSync(target)
       } catch {}
-      registry.unloadByName(path.parse(rel).name)
-      store.del(rel)
-
-      await ctx.reply(`🗑️ Plugin *${rel}* berhasil dihapus.`, {
-        parse_mode: 'Markdown',
-      })
-      return
+      registry.unloadByName(path.parse(file).name)
+      const map = DB.get('plugins_index', 'map') || {}
+      delete map[file]
+      DB.set('plugins_index', 'map', map)
+      return ctx.reply(`🗑️ Plugin <code>${file}</code> dihapus.`, { parse_mode: 'HTML' })
     }
 
-    // 🧾 get plugin (as image)
-    if (sub === 'get') {
-      const rawPath = args[1] || ''
-      if (!rawPath) return ctx.reply('Format: /plugins get <path/file.js>')
-      const rel = rawPath.endsWith('.js') ? rawPath : rawPath + '.js'
-      const target = path.join(PLUGINS_BASE, rel)
-
-      if (!fs.existsSync(target)) return ctx.reply('❌ Plugin tidak ditemukan.')
-
-      const code = fs.readFileSync(target, 'utf-8').slice(0, 5000)
-      const loading = await ctx.reply('🖼️ *Membuat preview kode...*', {
-        parse_mode: 'Markdown',
-      })
-
-      try {
-        const encoded = encodeURIComponent(code)
-        const imageUrl = `https://api.nekolabs.my.id/canvas/carbonify?code=${encoded}`
-        await ctx.deleteMessage(loading.message_id)
-        await ctx.replyWithPhoto(
-          { url: imageUrl },
-          {
-            caption: `📄 *${rel}*\nKode ditampilkan sebagai gambar.`,
-            parse_mode: 'Markdown',
-          },
-        )
-      } catch (err) {
-        console.error('Error carbonify:', err)
-        await ctx.deleteMessage(loading.message_id)
-        await ctx.reply('❌ Gagal membuat gambar kode.')
-      }
-      return
-    }
-
-    await ctx.reply('❓ Subcommand tidak dikenal.\nGunakan: add | del | get | list')
+    return ctx.reply('❓ Subcommand: add | del | list')
   },
 }
