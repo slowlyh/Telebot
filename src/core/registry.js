@@ -78,15 +78,24 @@ export class Registry {
 
   watch() {
     if (this.watcher) return
-    this.watcher = chokidar.watch(this.dir, { ignoreInitial: true })
-    this.watcher.on('add', (f) => this.loadFile(f))
+    // hanya pantau file .js — abaikan file sementara / non-JS
+    this.watcher = chokidar.watch(this.dir, {
+      ignoreInitial: true,
+      ignored: (p) => !p.endsWith('.js'),
+    })
+    this.watcher.on('add', (f) => {
+      if (!f.endsWith('.js')) return
+      this.loadFile(f)
+    })
     this.watcher.on('change', async (f) => {
+      if (!f.endsWith('.js')) return
       const item = [...this.map.values()].find((x) => x.file === f)
       if (item) this.unloadByName(item.name)
       await this.loadFile(f)
       logger.info('reloaded ' + path.basename(f))
     })
     this.watcher.on('unlink', (f) => {
+      if (!f.endsWith('.js')) return
       const item = [...this.map.values()].find((x) => x.file === f)
       if (item) this.unloadByName(item.name)
     })
