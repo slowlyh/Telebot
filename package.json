@@ -18,10 +18,12 @@
     "start": "node main.js",
     "dev": "node main.js",
     "bot": "node src/index.js",
+    "test": "node test/daftar-flow.test.mjs",
     "lint": "eslint .",
     "format": "prettier -w ."
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.100",
     "chokidar": "^3.6.0",
     "dotenv": "^16.4.5",
     "telegraf": "^4.16.3"

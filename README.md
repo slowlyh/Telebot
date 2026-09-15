@@ -32,7 +32,8 @@ Telebot/
     ├── db/
     │   └── index.js     # store JSON/SQLite dengan API yang sama
     ├── lib/
-    │   ├── captcha.js   # generator CAPTCHA PNG murni (tanpa dependensi)
+    │   ├── captcha.js   # CAPTCHA canvas (@napi-rs/canvas) + fallback PNG murni
+    │   ├── send.js      # kirim foto/teks tangguh (retry + fallback)
     │   ├── user.js      # inti data user: limit, exp/level, balance
     │   ├── rpg.js       # item, shop, zone, simulasi adventure
     │   └── logger.js    # logger berwarna + banner dashboard
@@ -93,7 +94,7 @@ Alur berurutan — **nama → umur → captcha**:
 3. Bot mengirim **gambar captcha**; tulis ulang kodenya. Salah 3× → batal, ketik `/daftar` lagi. Ketik `/batal` untuk membatalkan kapan saja.
 4. Berhasil → dapat **bonus saldo** dan **limit awal** otomatis.
 
-Captcha digenerate sendiri (PNG murni via `zlib`, tanpa dependensi native) dan **state-nya disimpan di database**, jadi alur tetap lanjut walau bot di-restart supervisor.
+Captcha digenerate sendiri dan **state-nya disimpan di database**, jadi alur tetap lanjut walau bot di-restart supervisor. Gambar captcha dirender dengan **canvas** (`@napi-rs/canvas`, binary prebuilt — tanpa kompilasi) sehingga tampilannya tajam dan berwarna; bila canvas tidak tersedia, otomatis memakai renderer PNG murni (fallback tanpa dependensi). Jika pengiriman gambar gagal karena gangguan jaringan, bot mengirim kode sebagai teks agar user tidak buntu.
 
 ### Atribut user
 

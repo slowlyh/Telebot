@@ -5,6 +5,7 @@
  */
 import { generateCaptcha } from '#lib/captcha'
 import { registerFlow, startFlow, getFlow } from '#core/flow'
+import { safeReplyWithPhoto } from '#lib/send'
 import config from '#config'
 import logger from '#lib/logger'
 import { ensureUser, maxLimitFor, fmtMoney, registerBonus, registerLimit } from '#lib/user'
@@ -14,6 +15,11 @@ const MAX_TRIES = 3
 
 registerFlow('daftar', {
   first: 'name',
+  // dipanggil core/flow saat sesi berakhir (sukses, batal, kedaluwarsa, error):
+  // pastikan kode captcha lama tidak tertinggal di DB
+  onExpire(DB, userId) {
+    DB.del(CAPTCHA_COL, String(userId))
+  },
   steps: {
     async name(ctx) {
       const name = (ctx.message?.text || '').trim()
@@ -25,38 +31,57 @@ registerFlow('daftar', {
         await ctx.reply('❌ Nama hanya boleh huruf, angka, spasi, dan . _ - Coba lagi:')
         return 'keep'
       }
-      await ctx.reply(`👍 Nama: <b>${name}</b>\n\nSekarang masukkan <b>umur</b> kamu (angka, 5–99):`, {
-        parse_mode: 'HTML',
-      })
+      await ctx.reply(
+        `👍 Nama: <b>${name}</b>\n\nSekarang masukkan <b>umur</b> kamu (angka, 5–99):`,
+        {
+          parse_mode: 'HTML',
+        },
+      )
       return { next: 'age', patch: { name } }
     },
 
     async age(ctx, { DB, userId }) {
       const raw = (ctx.message?.text || '').trim()
+      // harus digit murni: tolak '0x14', '1e2', ' 12 ', '12.5' yang lolos Number()
+      if (!/^\d{1,2}$/.test(raw)) {
+        await ctx.reply('❌ Umur harus angka antara 5 sampai 99. Coba lagi:')
+        return 'keep'
+      }
       const age = Number(raw)
-      if (!Number.isInteger(age) || age < 5 || age > 99) {
+      if (age < 5 || age > 99) {
         await ctx.reply('❌ Umur harus angka antara 5 sampai 99. Coba lagi:')
         return 'keep'
       }
 
-      const { text, png } = generateCaptcha(config.economy.captchaLength)
+      const { text, png, renderer } = generateCaptcha(config.economy.captchaLength)
       DB.set(CAPTCHA_COL, String(userId), {
         code: text.toUpperCase(),
         expiresAt: Date.now() + config.economy.captchaTtlMs,
         tries: 0,
       })
 
-      await ctx.replyWithPhoto(
-        { source: png },
-        {
-          caption:
-            `🔐 <b>Verifikasi Captcha</b>\n\n` +
-            `Tulis ulang <b>${text.length} karakter</b> pada gambar di bawah ini (huruf besar/kecil bebas).\n` +
-            `Berlaku ${Math.round(config.economy.captchaTtlMs / 1000)} detik · maksimal ${MAX_TRIES} percobaan.\n\n` +
-            `<i>Ketik /batal untuk membatalkan.</i>`,
-          parse_mode: 'HTML',
-        },
-      )
+      const sent = await safeReplyWithPhoto(ctx, png, {
+        caption:
+          `🔐 <b>Verifikasi Captcha</b>\n\n` +
+          `Tulis ulang <b>${text.length} karakter</b> pada gambar di bawah ini (huruf besar/kecil bebas).\n` +
+          `Berlaku ${Math.round(config.economy.captchaTtlMs / 1000)} detik · maksimal ${MAX_TRIES} percobaan.\n\n` +
+          `<i>Ketik /batal untuk membatalkan.</i>`,
+        parse_mode: 'HTML',
+      })
+
+      // jika foto gagal terkirim, kirim kode sebagai teks agar user tidak buntu
+      if (!sent) {
+        await ctx
+          .reply(
+            `⚠️ Gambar captcha gagal terkirim karena gangguan jaringan.\n\n` +
+              `Kode verifikasi kamu: <b>${text}</b>\n\n` +
+              `Tulis ulang kode di atas (berlaku ${Math.round(config.economy.captchaTtlMs / 1000)} detik).`,
+            { parse_mode: 'HTML' },
+          )
+          .catch(() => {})
+      }
+
+      logger.info(`captcha dibuat (${renderer}) untuk ${userId}`)
       return { next: 'captcha', patch: { age } }
     },
 
@@ -78,10 +103,14 @@ registerFlow('daftar', {
         DB.set(CAPTCHA_COL, String(userId), entry)
         if (entry.tries >= MAX_TRIES) {
           DB.del(CAPTCHA_COL, String(userId))
-          await ctx.reply(`❌ Captcha salah ${MAX_TRIES}x. Pendaftaran dibatalkan — kirim /daftar untuk mencoba lagi.`)
+          await ctx.reply(
+            `❌ Captcha salah ${MAX_TRIES}x. Pendaftaran dibatalkan — kirim /daftar untuk mencoba lagi.`,
+          )
           return 'done'
         }
-        await ctx.reply(`❌ Kode salah. Sisa percobaan: <b>${MAX_TRIES - entry.tries}</b>`, { parse_mode: 'HTML' })
+        await ctx.reply(`❌ Kode salah. Sisa percobaan: <b>${MAX_TRIES - entry.tries}</b>`, {
+          parse_mode: 'HTML',
+        })
         return 'keep'
       }
 

@@ -55,12 +55,58 @@ export function setStep(DB, userId, step, patch = {}) {
 }
 
 /**
+ * Terapkan hasil langkah flow ke state.
+ * @returns {boolean} true bila pesan/callback sudah ditangani flow
+ */
+function applyStepResult(DB, userId, f, result) {
+  // 'keep' → tetap di langkah ini (refresh TTL agar sesi tidak mati di tengah
+  // serangkaian input yang ditolak validasi)
+  // 'done'/false/null/undefined → selesai
+  // { next, patch } → lanjut ke langkah berikutnya
+  // 'namaLangkah' → lanjut ke langkah itu
+  if (result === 'keep') {
+    setStep(DB, userId, f.step)
+    return true
+  }
+
+  if (result === 'done' || result === false || result === null || result === undefined) {
+    clearFlow(DB, userId)
+    return true
+  }
+
+  if (typeof result === 'string') {
+    setStep(DB, userId, result)
+    return true
+  }
+
+  if (typeof result === 'object' && result.next) {
+    setStep(DB, userId, result.next, result.patch || {})
+    return true
+  }
+
+  clearFlow(DB, userId)
+  return true
+}
+
+/**
  * Jalankan langkah aktif untuk pesan user.
  * @returns {boolean} true bila pesan dikonsumsi oleh flow
  */
 export async function runFlow(ctx, deps) {
   const DB = deps.DB
   const userId = ctx.from?.id
+
+  // beri tahu bila sesi baru saja kedaluwarsa — jangan diamkan pesan user
+  const raw = DB.get('flows', String(userId))
+  if (raw && Date.now() - raw.at > TTL_MS) {
+    clearFlow(DB, userId)
+    handlers.get(raw.type)?.onExpire?.(DB, userId) // bersihkan milik flow (mis. captcha)
+    await ctx
+      .reply('⌛ Sesi percakapan berakhir. Kirim perintah lagi untuk mengulang.')
+      .catch(() => {})
+    // lanjut: pesan ini boleh ditangani dispatcher biasa setelah notifikasi
+  }
+
   const f = getFlow(DB, userId)
   if (!f) return false
 
@@ -79,6 +125,7 @@ export async function runFlow(ctx, deps) {
   const text = (ctx.message?.text || ctx.message?.caption || '').trim()
   if (/^(\/)?(batal|cancel)$/i.test(text)) {
     clearFlow(DB, userId)
+    def.onExpire?.(DB, userId) // bersihkan data pendamping (mis. captcha)
     await ctx.reply('❌ Dibatalkan. Kirim perintah lagi kapan saja.')
     return true
   }
@@ -86,39 +133,39 @@ export async function runFlow(ctx, deps) {
   // perintah lain (berprefix) membatalkan flow agar user tidak terjebak
   if (text.startsWith(config.prefix) && text.length > config.prefix.length) {
     clearFlow(DB, userId)
+    def.onExpire?.(DB, userId)
     return false
   }
 
   try {
     const result = await stepFn(ctx, { ...deps, flow: f, data: f.data, userId })
-
-    // 'keep' → tetap di langkah ini
-    // 'done'/false/null/undefined → selesai
-    // { next, patch } → lanjut ke langkah berikutnya
-    // 'namaLangkah' → lanjut ke langkah itu
-    if (result === 'keep') return true
-
-    if (result === 'done' || result === false || result === null || result === undefined) {
-      clearFlow(DB, userId)
-      return true
-    }
-
-    if (typeof result === 'string') {
-      setStep(DB, userId, result)
-      return true
-    }
-
-    if (typeof result === 'object' && result.next) {
-      setStep(DB, userId, result.next, result.patch || {})
-      return true
-    }
-
-    clearFlow(DB, userId)
-    return true
+    const consumed = applyStepResult(DB, userId, f, result)
+    // flow selesai (bukan 'keep' / lanjut langkah) → hook bersih data pendamping
+    if (consumed && result !== 'keep' && typeof result !== 'string' && !(result && result.next))
+      def.onExpire?.(DB, userId)
+    return consumed
   } catch (err) {
+    const msg = String(err?.message || err || '').toLowerCase()
+    const transient =
+      msg.includes('socket hang up') ||
+      msg.includes('econnreset') ||
+      msg.includes('etimedout') ||
+      msg.includes('fetch failed') ||
+      msg.includes('request to')
+
+    if (transient) {
+      // gangguan jaringan: pertahankan state agar user bisa lanjut, jangan reset
+      logger.warn('flow terganggu jaringan, state dipertahankan: ' + msg)
+      await ctx
+        .reply('⚠️ Koneksi ke Telegram terganggu. Coba kirim ulang pesan terakhirmu.')
+        .catch(() => {})
+      return true
+    }
+
     logger.error('flow error', err)
     clearFlow(DB, userId)
-    await ctx.reply('❌ Terjadi kesalahan pada alur. Silakan ulangi perintah.')
+    def.onExpire?.(DB, userId)
+    await ctx.reply('❌ Terjadi kesalahan pada alur. Silakan ulangi perintah.').catch(() => {})
     return true
   }
 }
