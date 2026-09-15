@@ -339,7 +339,7 @@ export async function userCallback(ctx, DB, registry, data, deps) {
       registry,
       config: deps?.config || config,
       isOwner: isOwner(ctx.from?.id),
-      logger: deps?.logger,
+      logger: deps?.logger || logger,
     })
     return true
   }
@@ -378,7 +378,7 @@ export async function userCallback(ctx, DB, registry, data, deps) {
       registry,
       config: deps?.config || config,
       isOwner: isOwner(ctx.from?.id),
-      logger: deps?.logger,
+      logger: deps?.logger || logger,
     })
   } catch (e) {
     logger.error('user callback error', e)
