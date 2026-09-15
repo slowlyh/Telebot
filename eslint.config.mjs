@@ -20,6 +20,8 @@ export default [
         clearInterval: 'readonly',
         globalThis: 'readonly',
         structuredClone: 'readonly',
+        fetch: 'readonly',
+        AbortController: 'readonly',
       },
     },
     rules: {

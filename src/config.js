@@ -36,6 +36,25 @@ export const config = {
     // style: 'photo' = gambar + tombol kategori | 'text' = tanpa gambar
     style: env('MENU_STYLE', 'photo'),
   },
+
+  // Ekonomi & RPG dasar — bisa diubah owner via /seteco.
+  economy: {
+    registerBonus: Number(env('ECO_REGISTER_BONUS', '5000')),
+    registerLimit: Number(env('ECO_REGISTER_LIMIT', '25')),
+    dailyBonus: Number(env('ECO_DAILY_BONUS', '1500')),
+    dailyCooldownMs: Number(env('ECO_DAILY_COOLDOWN_MS', String(20 * 60 * 60 * 1000))),
+    captchaTtlMs: Number(env('ECO_CAPTCHA_TTL_MS', '300000')),
+    captchaLength: Number(env('ECO_CAPTCHA_LENGTH', '5')),
+    currency: env('ECO_CURRENCY', '💰'),
+  },
+
+  // RPG dasar — dipakai plugin rpg.
+  rpg: {
+    minLevel: Number(env('RPG_MIN_LEVEL', '1')),
+    joinCost: Number(env('RPG_JOIN_COST', '500')),
+    adventureCost: Number(env('RPG_ADVENTURE_COST', '1')),
+    adventureExp: Number(env('RPG_ADVENTURE_EXP', '25')),
+  },
 }
 
 export const isOwner = (id) => config.ownerIds.includes(Number(id))

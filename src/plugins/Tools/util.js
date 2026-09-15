@@ -39,12 +39,19 @@ export default {
       const users = DB.all('users')
       const ids = Object.keys(users)
       if (!ids.length) return ctx.reply('Belum ada user tercatat.')
+      const registered = ids.filter((id) => users[id].registered)
       const lines = ids
         .slice(0, 40)
-        .map((id) => `• ${users[id].name}${users[id].username ? ' (@' + users[id].username + ')' : ''} — <code>${id}</code>`)
-      return ctx.reply(`👥 <b>${ids.length}</b> user tercatat\n\n${lines.join('\n')}`, {
-        parse_mode: 'HTML',
-      })
+        .map((id) => {
+          const u = users[id]
+          const tag = u.registered ? '✅' : '⬜'
+          const bal = (u.balance || 0).toLocaleString('id-ID')
+          return `${tag} ${u.regName || u.name}${u.username ? ' (@' + u.username + ')' : ''} — Lv${u.level || 1} · 💰${bal} · 🎫${u.limit ?? 0} — <code>${id}</code>`
+        })
+      return ctx.reply(
+        `👥 <b>${ids.length}</b> user (${registered.length} terdaftar)\n\n${lines.join('\n')}`,
+        { parse_mode: 'HTML' },
+      )
     }
 
     if (command === 'cek') {

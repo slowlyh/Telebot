@@ -72,8 +72,12 @@ export function makeHandler(ctx, DB, registry) {
     }),
   ).catch((err) => {
     logger.error(`plugin ${meta.name} error`, err)
-    const fail = (meta.failed || 'Gagal: %error').replace('%command', cmd).slice(0, 100)
-    ctx.reply(`❌ ${fail}\n<code>${(err?.message || String(err)).slice(0, 500)}</code>`, {
+    const msgText = String(err?.message || err).slice(0, 500)
+    const fail = (meta.failed || 'Gagal menjalankan %command: %error')
+      .replace('%command', cmd)
+      .replace('%error', msgText.slice(0, 200))
+      .slice(0, 300)
+    ctx.reply(`❌ ${fail.replace(/</g, '&lt;')}\n<code>${msgText.replace(/</g, '&lt;')}</code>`, {
       parse_mode: 'HTML',
     })
   })

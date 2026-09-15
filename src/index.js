@@ -6,12 +6,13 @@ import path from 'path'
 import fs from 'fs'
 import { Telegraf } from 'telegraf'
 import { message } from 'telegraf/filters'
-import config from '#config'
+import config, { isOwner } from '#config'
 import logger, { banner } from '#lib/logger'
 import { initDB } from '#db'
 import { Registry } from '#core/registry'
 import { makeHandler } from '#core/handler'
-import { showMenu, menuCallback, applyMenuPhoto, menuSettings } from '#core/menu'
+import { runFlow } from '#core/flow'
+import { showMenu, menuCallback, userCallback, applyMenuPhoto, menuSettings } from '#core/menu'
 
 const DB = await initDB()
 
@@ -44,7 +45,10 @@ bot.catch((err) => logger.error('telegram update error', err))
 
 // /start → render menu (di private chat langsung; di grup diarahkan ke private)
 const startOrMenu = (ctx) => {
-  if (ctx.chat.type === 'private') return showMenu(ctx, DB, registry, 'home')
+  if (ctx.chat.type === 'private') {
+    const payload = (ctx.message?.text || '').split(/\s+/)[1]
+    return showMenu(ctx, DB, registry, 'home', payload ? `start:${payload}` : null)
+  }
   const link = `https://t.me/${ctx.botInfo?.username || 'thisbot'}?start=menu`
   return ctx.reply(`🤖 Buka menu di private chat: ${link}`)
 }
@@ -56,21 +60,33 @@ bot.on(message('photo'), async (ctx) => {
   if (pending?.type === 'menu_photo') return applyMenuPhoto(ctx, DB)
 })
 
-// callback menu / settings
-bot.action(/^(m:|os:)/, async (ctx) => {
+// callback menu / settings / aksi user
+bot.action(/^(m:|os:|u:)/, async (ctx) => {
   try {
-    await menuCallback(ctx, DB, registry, ctx.callbackQuery.data)
+    const data = ctx.callbackQuery.data
+    if (data.startsWith('u:')) {
+      await userCallback(ctx, DB, registry, data, { config, logger })
+      return
+    }
+    await menuCallback(ctx, DB, registry, data)
   } catch (e) {
     logger.error('menu callback error', e)
     await ctx.answerCbQuery('Terjadi kesalahan.', { show_alert: true }).catch(() => {})
   }
 })
 
-// semua pesan teks lain → dispatcher plugin
-bot.on(message('text'), (ctx) => {
+// semua pesan teks lain → flow percakapan dulu, lalu dispatcher plugin
+bot.on(message('text'), async (ctx) => {
   // teks biasa membatalkan pending foto yang menggantung
   if (DB.get('pending', String(ctx.chat.id))?.type === 'menu_photo')
     DB.del('pending', String(ctx.chat.id))
+
+  // jalur alur percakapan (mis. /daftar) — hanya di private chat
+  if (ctx.chat.type === 'private') {
+    const consumed = await runFlow(ctx, { DB, registry, config, isOwner: isOwner(ctx.from?.id), logger })
+    if (consumed) return
+  }
+
   makeHandler(ctx, DB, registry)
 })
 

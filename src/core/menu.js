@@ -6,6 +6,7 @@
  */
 import { Markup } from 'telegraf'
 import config, { isOwner } from '#config'
+import logger from '#lib/logger'
 
 const ICONS = {
   info: 'ℹ️',
@@ -13,6 +14,8 @@ const ICONS = {
   group: '👥',
   owner: '👑',
   tools: '🛠️',
+  user: '👤',
+  rpg: '⚔️',
 }
 const icon = (cat) => ICONS[cat.toLowerCase()] || '▫️'
 
@@ -33,8 +36,39 @@ export function menuSettings(DB) {
 }
 
 const isFileId = (src) => typeof src === 'string' && /^AgA[AC]/.test(src)
-const photoSource = (src) =>
-  !src ? null : isFileId(src) ? src : /^https?:\/\//.test(src) ? { url: src } : src
+
+/**
+ * Selesaikan sumber foto: file_id dipakai apa adanya; URL diunduh sekali
+ * sebagai Buffer lalu file_id hasil upload dik-cache ke DB (photo_cache),
+ * supaya render berikutnya tidak menyentuh URL eksternal lagi.
+ */
+async function resolvePhoto(DB, photo) {
+  if (!photo) return null
+  if (isFileId(photo)) return { kind: 'file_id', value: photo }
+  if (!/^https?:\/\//.test(photo)) return null
+  const cached = DB.get('photo_cache', photo)
+  if (cached) return { kind: 'file_id', value: cached }
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 20_000)
+    const res = await fetch(photo, { signal: ctrl.signal })
+    clearTimeout(timer)
+    if (!res.ok) return null
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length > 8 * 1024 * 1024) return null
+    return { kind: 'buffer', value: buf }
+  } catch {
+    return null
+  }
+}
+
+/** simpan file_id dari pesan foto yang baru terkirim */
+function cachePhotoId(DB, url, msg) {
+  const p = msg?.photo?.sort((a, b) => b.width - a.width)[0]
+  if (p?.file_id) DB.set('photo_cache', url, p.file_id)
+}
+
+const stripTags = (t) => String(t).replace(/<\/?(?:b|i|code|u|s)>/g, '')
 
 async function remember(DB, chatId, msgId, type) {
   DB.set('menus', String(chatId), { msgId, type })
@@ -42,6 +76,30 @@ async function remember(DB, chatId, msgId, type) {
 
 /** render (atau edit) tampilan tertentu dari menu tanpa spam pesan baru */
 export async function showMenu(ctx, DB, registry, view = 'home', arg = null) {
+  // deep-link: /start daftar | profile | daily | shop | adventure | joinrpg
+  if (typeof arg === 'string' && arg.startsWith('start:')) {
+    const target = arg.slice('start:'.length).toLowerCase()
+    const map = {
+      daftar: 'u:daftar',
+      register: 'u:daftar',
+      profile: 'u:profile',
+      daily: 'u:daily',
+      balance: 'u:balance',
+      limit: 'u:balance',
+      shop: 'u:shop',
+      adventure: 'u:adv',
+      joinrpg: 'u:rpg',
+      inventori: 'u:inv',
+    }
+    if (target === 'menu' || !map[target]) {
+      view = 'home'
+      arg = null
+    } else {
+      await showMenu(ctx, DB, registry, 'home')
+      return userCallback(ctx, DB, registry, map[target], {})
+    }
+  }
+
   const s = menuSettings(DB)
   const cats = registry.categories()
   const catNames = Object.keys(cats).sort((a, b) => a.localeCompare(b))
@@ -51,15 +109,45 @@ export async function showMenu(ctx, DB, registry, view = 'home', arg = null) {
 
   if (view === 'home') {
     const st = registry.stats()
+    const u = ctx.from ? DB.get('users', String(ctx.from.id)) : null
+    const reg = Boolean(u?.registered)
+    const cur = config.economy.currency
+
     caption = [
       `🤖 <b>${escapeHtml(s.title)}</b>`,
       `<i>${escapeHtml(s.subtitle)}</i>`,
       '',
+      ctx.from
+        ? reg
+          ? `👤 <b>${escapeHtml(u.regName || u.name || 'User')}</b> · Lv <b>${u.level || 1}</b>\n${cur} <b>${(u.balance || 0).toLocaleString('id-ID')}</b> · 🎫 <b>${u.limit ?? 0}</b> · ⚔️ <b>${u.rpg ? 'RPG aktif' : 'belum RPG'}</b>`
+          : `👤 <b>${escapeHtml(ctx.from.first_name || 'User')}</b> — belum terdaftar\n<i>Tekan 📝 Daftar untuk mulai.</i>`
+        : '',
+      '',
       `🧩 <b>${st.visible}</b> perintah · <b>${catNames.length}</b> kategori · <b>${st.plugins}</b> plugin`,
       `⏱️ Uptime <code>${fmtDuration(Math.floor(process.uptime()))}</code> · Node <code>${process.version}</code>`,
-      '',
-      '👇 Pilih kategori di bawah:',
-    ].join('\n')
+    ]
+      .filter((x) => x !== null)
+      .join('\n')
+
+    // baris aksi user (full button)
+    if (ctx.from && !reg) {
+      rows.push([Markup.button.callback('📝 Daftar Sekarang', 'u:daftar')])
+    } else if (ctx.from) {
+      rows.push([
+        Markup.button.callback('👤 Profil', 'u:profile'),
+        Markup.button.callback('🗓️ Daily', 'u:daily'),
+      ])
+      rows.push([
+        Markup.button.callback('⚔️ Adventure', 'u:adv'),
+        Markup.button.callback('🎒 Inventori', 'u:inv'),
+      ])
+      rows.push([
+        Markup.button.callback('🛒 Shop', 'u:shop'),
+        Markup.button.callback('💰 Balance', 'u:balance'),
+      ])
+    }
+
+    // tombol kategori
     for (let i = 0; i < catNames.length; i += 2) {
       rows.push(
         catNames.slice(i, i + 2).map((n) =>
@@ -67,6 +155,7 @@ export async function showMenu(ctx, DB, registry, view = 'home', arg = null) {
         ),
       )
     }
+
     const bottom = [
       Markup.button.url('📦 Repo', s.repoUrl),
       Markup.button.url('🌐 Website', s.siteUrl),
@@ -141,45 +230,59 @@ export async function showMenu(ctx, DB, registry, view = 'home', arg = null) {
 
   const kb = Markup.inlineKeyboard(rows).reply_markup
   const saved = DB.get('menus', String(chatId))
-  const src = photoSource(s.photo)
+  const wantPhoto = s.style !== 'text'
+  const photo = await resolvePhoto(DB, s.photo)
 
   // coba edit pesan menu yang sudah ada (hemat pesan, tidak spam)
   if (saved?.msgId) {
     try {
-      if (saved.type === 'text' || s.style === 'text') {
+      if (!wantPhoto || saved.type === 'text') {
         await ctx.telegram.editMessageText(chatId, saved.msgId, undefined, caption, {
           parse_mode: 'HTML',
           reply_markup: kb,
         })
         return
       }
-      await ctx.telegram.editMessageMedia(chatId, saved.msgId, undefined, {
-        type: 'photo',
-        media: src || { url: config.menu.photo },
-        caption,
-        parse_mode: 'HTML',
-      })
-      await ctx.telegram.editMessageReplyMarkup(chatId, saved.msgId, undefined, kb)
-      return
+      if (photo?.kind === 'file_id') {
+        await ctx.telegram.editMessageMedia(chatId, saved.msgId, undefined, {
+          type: 'photo',
+          media: photo.value,
+          caption,
+          parse_mode: 'HTML',
+        })
+        await ctx.telegram.editMessageReplyMarkup(chatId, saved.msgId, undefined, kb)
+        return
+      }
     } catch {
       // pesan lama sudah hilang / tidak bisa diedit → kirim baru
     }
   }
 
-  let msg
-  if (s.style !== 'text' && src) {
-    msg = await ctx.replyWithPhoto(src, {
-      caption,
-      parse_mode: 'HTML',
-      reply_markup: kb,
-    })
-  } else {
-    msg = await ctx.reply(caption, {
-      parse_mode: 'HTML',
-      reply_markup: kb,
-    })
+  let msg = null
+  if (wantPhoto && photo) {
+    const media = photo.kind === 'file_id' ? photo.value : { source: photo.value }
+    for (let attempt = 0; attempt < 2 && !msg; attempt++) {
+      try {
+        msg = await ctx.replyWithPhoto(media, {
+          caption,
+          parse_mode: 'HTML',
+          reply_markup: kb,
+        })
+      } catch (e) {
+        if (attempt === 1) logger.warn('foto menu gagal, fallback teks: ' + e.message)
+      }
+    }
+    if (msg && photo.kind === 'buffer') cachePhotoId(DB, s.photo, msg)
   }
-  await remember(DB, chatId, msg.message_id, s.style !== 'text' && src ? 'photo' : 'text')
+  if (!msg) {
+    // fallback: kirim teks polos (tag HTML dilucuti kalau parse gagal)
+    try {
+      msg = await ctx.reply(caption, { parse_mode: 'HTML', reply_markup: kb })
+    } catch {
+      msg = await ctx.reply(stripTags(caption), { reply_markup: kb })
+    }
+  }
+  await remember(DB, chatId, msg.message_id, wantPhoto && photo ? 'photo' : 'text')
 }
 
 /** tangani callback menu — return true bila data callback termasuk milik menu */
@@ -217,6 +320,71 @@ export async function menuCallback(ctx, DB, registry, data) {
   const arg = rest.join(':') || null
   await showMenu(ctx, DB, registry, view, arg)
   return ctx.answerCbQuery()
+}
+
+/** tombol aksi user/RPG (prefix `u:`) — dipanggil dari index.js */
+export async function userCallback(ctx, DB, registry, data, deps) {
+  if (data === 'u:daftar') {
+    const meta = registry.resolve('daftar')
+    if (!meta) {
+      await ctx.answerCbQuery('Fitur daftar belum tersedia.', { show_alert: true })
+      return true
+    }
+    await ctx.answerCbQuery()
+    await meta.handler({
+      ctx,
+      args: [],
+      command: 'daftar',
+      DB,
+      registry,
+      config: deps?.config || config,
+      isOwner: isOwner(ctx.from?.id),
+      logger: deps?.logger,
+    })
+    return true
+  }
+
+  const map = {
+    'u:profile': 'profile',
+    'u:daily': 'daily',
+    'u:balance': 'balance',
+    'u:inv': 'inventori',
+    'u:adv': 'adventure',
+    'u:shop': 'shop',
+    'u:rpg': 'joinrpg',
+    'u:refill': 'balance',
+  }
+  const item = data.startsWith('u:buy:') ? 'shop' : map[data]
+  if (!item) return false
+
+  const meta = registry.resolve(item)
+  if (!meta) {
+    await ctx.answerCbQuery('Fitur belum tersedia.', { show_alert: true })
+    return true
+  }
+
+  await ctx.answerCbQuery()
+  const args = data.startsWith('u:buy:')
+    ? [data.slice('u:buy:'.length)]
+    : data === 'u:refill'
+      ? ['refill']
+      : []
+  try {
+    await meta.handler({
+      ctx,
+      args,
+      command: args[0] === 'refill' ? 'refill' : meta.commands[0],
+      DB,
+      registry,
+      config: deps?.config || config,
+      isOwner: isOwner(ctx.from?.id),
+      logger: deps?.logger,
+    })
+  } catch (e) {
+    logger.error('user callback error', e)
+    await ctx.reply('❌ Terjadi kesalahan: ' + String(e.message).slice(0, 200)).catch(() => {})
+  }
+  return true
 }
 
 /** simpan foto menu yang baru dikirim owner (dipanggil dari index.js) */
