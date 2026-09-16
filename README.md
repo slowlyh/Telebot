@@ -6,7 +6,7 @@ Bot Telegram berbasis [Telegraf](https://telegraf.js.org) dengan arsitektur plug
 
 - **Plugin arsitektur** — setiap fitur adalah satu file di `src/plugins/<Kategori>/`, auto-load + hot-reload (chokidar).
 - **Menu interaktif full-button** — satu pesan saja yang berubah (edit, bukan kirim baru → anti-spam): home → kategori → detail plugin, lengkap dengan foto header dan inline button. Aksi user (Profil, Daily, Adventure, Shop, Balance) langsung tersedia sebagai tombol.
-- **Sistem user** — pendaftaran (`/daftar`) dengan verifikasi **captcha gambar**, bonus awal; tiap user punya **saldo**, **limit**, **EXP/level**.
+- **Sistem user** — pendaftaran (`/daftar`) dengan **kode verifikasi teks**, bonus awal; tiap user punya **saldo**, **limit**, **EXP/level**.
 - **RPG dasar** — `/joinrpg` (wajib daftar dulu), `/adventure`, `/inventori`, `/shop`, `/sell`, `/equip` dengan HP, ATK/DEF, loot, dan level.
 - **Owner dapat mengatur tampilan menu** dari bot: ganti gambar header (kirim foto), mode foto/teks, reset ke bawaan — tersimpan di database.
 - **Database ganda** — default **JSON**, bisa diganti **SQLite** lewat config (`DB_TYPE=sqlite`). API penyimpanan identik untuk keduanya.
@@ -32,8 +32,7 @@ Telebot/
     ├── db/
     │   └── index.js     # store JSON/SQLite dengan API yang sama
     ├── lib/
-    │   ├── captcha.js   # CAPTCHA canvas (@napi-rs/canvas) + fallback PNG murni
-    │   ├── send.js      # kirim foto/teks tangguh (retry + fallback)
+    │   ├── captcha.js   # generator kode verifikasi teks (tanpa gambar, tanpa dependensi)
     │   ├── user.js      # inti data user: limit, exp/level, balance
     │   ├── rpg.js       # item, shop, zone, simulasi adventure
     │   └── logger.js    # logger berwarna + banner dashboard
@@ -87,14 +86,14 @@ Ganti database cukup ubah `DB_TYPE` lalu restart. Data lama di `src/database/dat
 ## Sistem User & Ekonomi
 
 ### Daftar (`/daftar`)
-Alur berurutan — **nama → umur → captcha**:
+Alur berurutan — **nama → umur → kode verifikasi**:
 
 1. Ketik `/daftar` (hanya di private chat) lalu kirim nama (3–32 karakter).
 2. Masukkan umur (angka 5–99).
-3. Bot mengirim **gambar captcha**; tulis ulang kodenya. Salah 3× → batal, ketik `/daftar` lagi. Ketik `/batal` untuk membatalkan kapan saja.
+3. Bot mengirim **kode verifikasi sebagai teks**; ketik ulang kodenya. Salah 3× → batal, ketik `/daftar` lagi. Ketik `/batal` untuk membatalkan kapan saja.
 4. Berhasil → dapat **bonus saldo** dan **limit awal** otomatis.
 
-Captcha digenerate sendiri dan **state-nya disimpan di database**, jadi alur tetap lanjut walau bot di-restart supervisor. Gambar captcha dirender dengan **canvas** (`@napi-rs/canvas`, binary prebuilt — tanpa kompilasi) sehingga tampilannya tajam dan berwarna; bila canvas tidak tersedia, otomatis memakai renderer PNG murni (fallback tanpa dependensi). Jika pengiriman gambar gagal karena gangguan jaringan, bot mengirim kode sebagai teks agar user tidak buntu.
+Kode digenerate sendiri (alphabet bebas ambiguitas, tanpa 0/O dan 1/I/L) dan **state-nya disimpan di database**, jadi alur tetap lanjut walau bot di-restart supervisor. Verifikasi tanpa gambar: lebih ringan, tanpa dependensi, dan tetap menuntut user mengetik ulang kodenya.
 
 ### Atribut user
 

@@ -9,8 +9,8 @@ const ECO_KEYS = {
   registerLimit: 'limit daftar',
   dailyBonus: 'bonus daily',
   dailyCooldownMs: 'cooldown daily (ms)',
-  captchaLength: 'panjang captcha',
-  captchaTtlMs: 'masa berlaku captcha (ms)',
+  captchaLength: 'panjang kode verifikasi',
+  captchaTtlMs: 'masa berlaku kode verifikasi (ms)',
   joinCost: 'biaya join RPG',
   adventureCost: 'biaya adventure (limit)',
   adventureExp: 'exp adventure',
@@ -35,7 +35,14 @@ export default {
           return `• <code>${k}</code> — ${label}: <b>${val}</b>`
         })
         return ctx.reply(
-          ['⚙️ <b>PENGATURAN EKONOMI</b>', '', lines.join('\n'), '', '<i>Ubah: /seteco &lt;key&gt; &lt;nilai&gt;</i>', '<i>Catatan: perubahan bersifat sementara (runtime), set permanen via .env</i>'].join('\n'),
+          [
+            '⚙️ <b>PENGATURAN EKONOMI</b>',
+            '',
+            lines.join('\n'),
+            '',
+            '<i>Ubah: /seteco &lt;key&gt; &lt;nilai&gt;</i>',
+            '<i>Catatan: perubahan bersifat sementara (runtime), set permanen via .env</i>',
+          ].join('\n'),
           { parse_mode: 'HTML' },
         )
       }
@@ -50,7 +57,8 @@ export default {
 
     // target user: reply, argumen @username, atau ID
     const targetId = await resolveTarget(ctx, args, DB)
-    if (!targetId) return ctx.reply('📖 Reply user, atau sertakan ID: /' + command + ' <id> [jumlah]')
+    if (!targetId)
+      return ctx.reply('📖 Reply user, atau sertakan ID: /' + command + ' <id> [jumlah]')
 
     const u = getUser(DB, targetId)
     if (!u) return ctx.reply('❌ User tidak ditemukan di database.')
@@ -76,9 +84,12 @@ export default {
 
     if (command === 'addsaldo') {
       const bal = addBalance(DB, targetId, amount)
-      return ctx.reply(`✅ Saldo <code>${targetId}</code> → ${config.economy.currency} <b>${fmtMoney(bal)}</b>`, {
-        parse_mode: 'HTML',
-      })
+      return ctx.reply(
+        `✅ Saldo <code>${targetId}</code> → ${config.economy.currency} <b>${fmtMoney(bal)}</b>`,
+        {
+          parse_mode: 'HTML',
+        },
+      )
     }
     if (command === 'addlimit') {
       const lim = addLimit(DB, targetId, amount)
@@ -86,7 +97,9 @@ export default {
     }
     if (command === 'resetlimit') {
       const lim = refillLimit(DB, targetId)
-      return ctx.reply(`✅ Limit <code>${targetId}</code> diisi penuh → <b>${lim}</b>`, { parse_mode: 'HTML' })
+      return ctx.reply(`✅ Limit <code>${targetId}</code> diisi penuh → <b>${lim}</b>`, {
+        parse_mode: 'HTML',
+      })
     }
   },
 }

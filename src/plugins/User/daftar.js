@@ -1,11 +1,10 @@
 /**
  * Telebot © 2025 slowlyh — plugin: pendaftaran user.
- * Alur: /daftar → nama → umur → captcha (gambar) → tulis ulang kode → bonus awal.
- * State flow & captcha disimpan di DB agar tahan restart supervisor.
+ * Alur: /daftar → nama → umur → kode verifikasi (teks) → ketik ulang kode → bonus awal.
+ * State flow & kode captcha disimpan di DB agar tahan restart supervisor.
  */
-import { generateCaptcha } from '#lib/captcha'
+import { generateCode } from '#lib/captcha'
 import { registerFlow, startFlow, getFlow } from '#core/flow'
-import { safeReplyWithPhoto } from '#lib/send'
 import config from '#config'
 import logger from '#lib/logger'
 import { ensureUser, maxLimitFor, fmtMoney, registerBonus, registerLimit } from '#lib/user'
@@ -53,35 +52,24 @@ registerFlow('daftar', {
         return 'keep'
       }
 
-      const { text, png, renderer } = generateCaptcha(config.economy.captchaLength)
+      const { code } = generateCode(config.economy.captchaLength)
       DB.set(CAPTCHA_COL, String(userId), {
-        code: text.toUpperCase(),
+        code,
         expiresAt: Date.now() + config.economy.captchaTtlMs,
         tries: 0,
       })
 
-      const sent = await safeReplyWithPhoto(ctx, png, {
-        caption:
-          `🔐 <b>Verifikasi Captcha</b>\n\n` +
-          `Tulis ulang <b>${text.length} karakter</b> pada gambar di bawah ini (huruf besar/kecil bebas).\n` +
+      await ctx.reply(
+        `🔐 <b>Verifikasi Kode</b>\n\n` +
+          `Kode kamu: <b>${code}</b>\n\n` +
+          `Ketik ulang <b>kode di atas</b> persis seperti tertulis untuk melanjutkan ` +
+          `(persis tapi huruf besar/kecil bebas).\n` +
           `Berlaku ${Math.round(config.economy.captchaTtlMs / 1000)} detik · maksimal ${MAX_TRIES} percobaan.\n\n` +
           `<i>Ketik /batal untuk membatalkan.</i>`,
-        parse_mode: 'HTML',
-      })
+        { parse_mode: 'HTML' },
+      )
 
-      // jika foto gagal terkirim, kirim kode sebagai teks agar user tidak buntu
-      if (!sent) {
-        await ctx
-          .reply(
-            `⚠️ Gambar captcha gagal terkirim karena gangguan jaringan.\n\n` +
-              `Kode verifikasi kamu: <b>${text}</b>\n\n` +
-              `Tulis ulang kode di atas (berlaku ${Math.round(config.economy.captchaTtlMs / 1000)} detik).`,
-            { parse_mode: 'HTML' },
-          )
-          .catch(() => {})
-      }
-
-      logger.info(`captcha dibuat (${renderer}) untuk ${userId}`)
+      logger.info(`kode verifikasi dibuat untuk ${userId}`)
       return { next: 'captcha', patch: { age } }
     },
 
@@ -90,12 +78,12 @@ registerFlow('daftar', {
       const entry = DB.get(CAPTCHA_COL, String(userId))
 
       if (!entry) {
-        await ctx.reply('⚠️ Sesi captcha hilang. Kirim /daftar untuk memulai ulang.')
+        await ctx.reply('⚠️ Sesi verifikasi hilang. Kirim /daftar untuk memulai ulang.')
         return 'done'
       }
       if (Date.now() > entry.expiresAt) {
         DB.del(CAPTCHA_COL, String(userId))
-        await ctx.reply('⌛ Captcha kedaluwarsa. Kirim /daftar untuk memulai ulang.')
+        await ctx.reply('⌛ Kode kedaluwarsa. Kirim /daftar untuk memulai ulang.')
         return 'done'
       }
       if (answer !== entry.code) {
@@ -104,7 +92,7 @@ registerFlow('daftar', {
         if (entry.tries >= MAX_TRIES) {
           DB.del(CAPTCHA_COL, String(userId))
           await ctx.reply(
-            `❌ Captcha salah ${MAX_TRIES}x. Pendaftaran dibatalkan — kirim /daftar untuk mencoba lagi.`,
+            `❌ Kode salah ${MAX_TRIES}x. Pendaftaran dibatalkan — kirim /daftar untuk mencoba lagi.`,
           )
           return 'done'
         }
@@ -164,7 +152,7 @@ registerFlow('daftar', {
 
 export default {
   name: 'daftar',
-  description: 'Daftar akun user (nama, umur, verifikasi captcha) + bonus awal',
+  description: 'Daftar akun user (nama, umur, kode verifikasi teks) + bonus awal',
   command: ['daftar', 'register'],
   hidden: false,
   category: 'user',
@@ -190,7 +178,7 @@ export default {
       [
         '📝 <b>Pendaftaran Akun Telebot</b>',
         '',
-        'Langkah: nama → umur → verifikasi captcha.',
+        'Langkah: nama → umur → ketik ulang kode verifikasi.',
         'Bonus saldo & limit langsung diberikan setelah verifikasi berhasil.',
         '',
         'Ketik <b>nama lengkap</b> kamu sekarang:',

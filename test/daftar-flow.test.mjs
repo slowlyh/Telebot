@@ -1,6 +1,6 @@
 /**
  * Harness simulasi alur /daftar: DB asli (sqlite/ json via env), plugin daftar,
- * core flow — tanpa Telegram. Mock ctx mencatat balasan & bisa dipaksa gagal kirim foto.
+ * core flow — tanpa Telegram. Mock ctx mencatat balasan.
  * Jalankan: node test/daftar-flow.test.mjs
  */
 import assert from 'node:assert'
@@ -23,7 +23,7 @@ const USER = { id: 111, first_name: 'Tester', username: 'tester' }
 const CHAT = { id: 111, type: 'private' }
 
 let sent = []
-function makeCtx({ photoFails = false } = {}) {
+function makeCtx() {
   return {
     from: USER,
     chat: CHAT,
@@ -34,11 +34,6 @@ function makeCtx({ photoFails = false } = {}) {
       return Promise.resolve({ message_id: sent.length })
     },
     replyWithPhoto(_media, opts) {
-      if (photoFails) {
-        const e = new Error('request to https://api.telegram.org failed, reason: socket hang up')
-        e.code = 'ECONNRESET'
-        return Promise.reject(e)
-      }
       sent.push({ kind: 'photo', caption: String(opts?.caption || '') })
       return Promise.resolve({ message_id: sent.length })
     },
@@ -72,9 +67,13 @@ function reset() {
   await feed(ctx, 'Budi Santoso')
   assert.ok(last().text.includes('umur'), 'harus minta umur')
   await feed(ctx, '17')
-  assert.equal(last().kind, 'photo', 'harus kirim gambar captcha')
+  assert.equal(last().kind, 'text', 'verifikasi harus berupa teks, bukan foto')
+  assert.ok(last().text.includes('Verifikasi Kode'), 'header verifikasi: ' + last().text)
+  const m = last().text.match(/Kode kamu: <b>(\w+)<\/b>/)
+  assert.ok(m, 'kode harus tercantum di pesan')
   const cap = DB.get('captcha', USER_ID_STR)
   assert.ok(cap?.code, 'captcha tersimpan di DB')
+  assert.equal(cap.code, m[1], 'kode DB = kode pesan')
   await feed(ctx, 'XXXXX')
   assert.ok(cap.code !== 'XXXXX', 'hindari kebetulan benar')
   assert.ok(last().text.includes('Sisa percobaan'), 'harus info sisa percobaan')
@@ -102,20 +101,25 @@ function reset() {
   console.log('✓ test 2 — 3x salah → batal bersih')
 }
 
-// ---------- test 3: foto gagal → fallback kode teks ----------
+// ---------- test 3: tanpa gambar + toleransi spasi/case ----------
 {
   reset()
-  const ctx = makeCtx({ photoFails: true })
+  const ctx = makeCtx()
+  let photoCalls = 0
+  const origPhoto = ctx.replyWithPhoto
+  ctx.replyWithPhoto = (...a) => {
+    photoCalls++
+    return origPhoto.call(ctx, ...a)
+  }
   await plugin.handler({ ctx, args: [], command: 'daftar', DB })
-  await feed(ctx, 'Jaringan Buruk')
-  const t0 = Date.now()
+  await feed(ctx, 'Kode Teks')
   await feed(ctx, '25')
-  assert.ok(last().text.includes('Kode verifikasi'), 'harus fallback teks')
-  const m = last().text.match(/Kode verifikasi kamu: <b>(\w+)<\/b>/)
+  assert.equal(photoCalls, 0, 'tidak boleh ada kiriman foto sama sekali')
+  const m = last().text.match(/Kode kamu: <b>(\w+)<\/b>/)
   assert.ok(m, 'kode harus tercantum')
-  await feed(ctx, m[1])
-  assert.ok(last().text.includes('Berhasil'), 'sukses via fallback')
-  console.log('✓ test 3 — fallback teks saat foto gagal (±' + (Date.now() - t0) + 'ms)')
+  await feed(ctx, ' ' + m[1].toLowerCase().split('').join(' ') + ' ') // case + spasi
+  assert.ok(last().text.includes('Berhasil'), 'sukses meski beda case/spasi')
+  console.log('✓ test 3 — verifikasi murni teks, toleran spasi & case')
 }
 
 // ---------- test 4: ketahanan restart (state di DB) ----------
